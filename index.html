@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard PIR en Tiempo Real – ESP32</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f6f9;
+      margin: 0;
+      padding: 0;
+      text-align: center;
+    }
+
+    header {
+      background: #1e88e5;
+      color: white;
+      padding: 25px;
+      font-size: 26px;
+      font-weight: bold;
+      text-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+    }
+
+    .container {
+      width: 90%;
+      max-width: 900px;
+      margin: 30px auto;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 22px;
+      margin-bottom: 25px;
+      box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
+    }
+
+    #status {
+      font-size: 32px;
+      font-weight: bold;
+      padding: 15px;
+      border-radius: 12px;
+      transition: 0.3s;
+      margin-bottom: 10px;
+    }
+
+    #timeline {
+      text-align: left;
+      font-size: 16px;
+      height: 200px;
+      overflow-y: auto;
+      padding-right: 10px;
+    }
+
+    .export-btn {
+      padding: 12px 20px;
+      border: none;
+      background: #1e88e5;
+      color: white;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      margin-top: 12px;
+    }
+
+    .export-btn:hover {
+      background: #166fbd;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>Dashboard PIR – ESP32 en Tiempo Real</header>
+
+  <div class="container">
+
+    <!-- Estado en tiempo real -->
+    <div class="card">
+      <h2>Estado del Sensor</h2>
+      <div id="status">⏳ Conectando...</div>
+      <p style="color:#666;">Conectado a ESP32 en <strong>192.168.1.33</strong></p>
+    </div>
+
+    <!-- Gráfico -->
+    <div class="card">
+      <h2>Gráfico en Tiempo Real</h2>
+      <canvas id="chart" height="120"></canvas>
+    </div>
+
+    <!-- Historial -->
+    <div class="card">
+      <h2>Historial de Eventos</h2>
+      <div id="timeline"></div>
+      <button class="export-btn" onclick="exportCSV()">📥 Exportar CSV</button>
+    </div>
+
+  </div>
+
+  <script>
+    // ======== CONFIGURAR ========
+    const socket = new WebSocket("ws://192.168.1.33:81/");
+
+    const statusDiv = document.getElementById("status");
+    const timelineDiv = document.getElementById("timeline");
+
+    let dataPoints = [];  // historial para CSV
+    let chartLabels = [];
+    let chartData = [];
+
+    // ======== CHART.JS CONFIG ========
+    const ctx = document.getElementById("chart").getContext("2d");
+    const chart = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: [],
+        datasets: [{
+          label: "Movimiento (1) / No movimiento (0)",
+          data: [],
+          backgroundColor: function (ctx) {
+            return ctx.raw === 1 ? "#ff5252" : "#8bc34a";
+          }
+        }]
+      },
+      options: {
+        responsive: true,
+        animation: false,
+        scales: {
+          y: {
+            min: 0,
+            max: 1,
+            ticks: { stepSize: 1 }
+          }
+        }
+      }
+    });
+
+    // ======== CONEXIÓN ========
+    socket.onopen = () => {
+      statusDiv.innerHTML = "🟢 Conectado al ESP32";
+      statusDiv.style.background = "#c8f7dc";
+      statusDiv.style.color = "#087f23";
+    };
+
+    socket.onerror = () => {
+      statusDiv.innerHTML = "⚠️ Error de conexión";
+      statusDiv.style.background = "#ffe8e8";
+      statusDiv.style.color = "#c62828";
+    };
+
+    socket.onclose = () => {
+      statusDiv.innerHTML = "❌ Conexión cerrada";
+      statusDiv.style.background = "#ffe8e8";
+      statusDiv.style.color = "#c62828";
+    };
+
+    // ======== DATOS EN TIEMPO REAL ========
+    socket.onmessage = (event) => {
+      const value = Number(event.data);
+      const timestamp = new Date().toLocaleTimeString();
+
+      // Mostrar estado
+      if (value === 1) {
+        statusDiv.innerHTML = "🔥 Movimiento Detectado";
+        statusDiv.style.background = "#ffebee";
+        statusDiv.style.color = "#c62828";
+      } else {
+        statusDiv.innerHTML = "🟢 Sin Movimiento";
+        statusDiv.style.background = "#e8f5e9";
+        statusDiv.style.color = "#087f23";
+      }
+
+      // Agregar al timeline
+      timelineDiv.innerHTML =
+        `<div>[${timestamp}] → ${value === 1 ? "🔥 Movimiento" : "🟢 Sin movimiento"}</div>` +
+        timelineDiv.innerHTML;
+
+      // Guardar para CSV
+      dataPoints.push({ time: timestamp, value });
+
+      // ======== ACTUALIZAR GRÁFICO ========
+      chartLabels.push(timestamp);
+      chartData.push(value);
+
+      // mantener solo últimos 60 puntos
+      if (chartLabels.length > 60) {
+        chartLabels.shift();
+        chartData.shift();
+      }
+
+      chart.data.labels = chartLabels;
+      chart.data.datasets[0].data = chartData;
+      chart.update();
+    };
+
+    // ======== EXPORTAR CSV ========
+    function exportCSV() {
+      let csv = "Tiempo,Movimiento\n";
+      dataPoints.forEach(p => {
+        csv += `${p.time},${p.value}\n`;
+      });
+
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = window.URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "pir_data.csv";
+      a.click();
+
+      window.URL.revokeObjectURL(url);
+    }
+  </script>
+
+</body>
+</html>
